@@ -58,6 +58,8 @@ type Entry struct {
 
 	// Job is the thing to run when the Schedule is activated.
 	Job Job
+
+	Running bool
 }
 
 // Valid returns true if this is not the zero entry.
@@ -217,7 +219,10 @@ func (c *Cron) Run() {
 	c.run()
 }
 
-func (c *Cron) runWithRecovery(j Job) {
+func (c *Cron) runWithRecovery(e *Entry) {
+	e.Running = true
+	defer func() { e.Running = false }()
+
 	defer func() {
 		if r := recover(); r != nil {
 			const size = 64 << 10
@@ -226,7 +231,7 @@ func (c *Cron) runWithRecovery(j Job) {
 			c.logf("cron: panic running job: %v\n%s", r, buf)
 		}
 	}()
-	j.Run()
+	e.Job.Run()
 }
 
 // run the scheduler.. this is private just due to the need to synchronize
@@ -257,10 +262,14 @@ func (c *Cron) run() {
 				now = now.In(c.location)
 				// Run every entry whose next time was less than now
 				for _, e := range c.entries {
+					if e.Running {
+						continue
+					}
+
 					if e.Next.After(now) || e.Next.IsZero() {
 						break
 					}
-					go c.runWithRecovery(e.Job)
+					go c.runWithRecovery(e)
 					e.Prev = e.Next
 					e.Next = e.Schedule.Next(now)
 				}
